@@ -5,12 +5,15 @@ Un estudio de voz a texto con interfaz en español. Inspirado en la organizació
 ## Funciones
 
 - Subir audio o grabar con el micrófono.
-- Transcripción real con Whisper Tiny o Base multilingüe, mediante Transformers.js 3.8.1 en un Web Worker.
+- Transcripción real con Whisper Tiny o Base multilingüe, mediante Transformers.js 4.3.1 en un Web Worker.
 - Español, inglés y detección automática de idioma.
 - Editor, contador de palabras, copiar y descargar TXT.
 - Exportación SRT con marcas temporales del modelo; los tiempos se eliminan al editar porque dejan de corresponder al texto.
 - Historial de hasta 20 transcripciones en localStorage, con eliminación individual o completa.
 - Cancelación del procesamiento y diseño adaptable al celular.
+- Selección automática de WebGPU cuando el navegador y la GPU lo permiten, con recuperación en un Worker nuevo de WASM si falla.
+- Tiempos y SRT opcionales para evitar ese trabajo cuando solo necesitas texto.
+- Contadores de actividad y fragmentos para distinguir la descarga del procesamiento.
 
 ## GitHub Pages
 
@@ -20,6 +23,16 @@ Un estudio de voz a texto con interfaz en español. Inspirado en la organizació
 4. Abrir la URL que entrega el workflow. Todas las rutas son relativas, compatibles con sitios de proyecto.
 
 No requiere backend, claves API ni instalación de dependencias npm. Para desarrollo, servir `dist` por HTTP, por ejemplo `python3 -m http.server 8000 --directory dist`. El micrófono requiere HTTPS o localhost.
+
+## Rendimiento en la versión 1.1
+
+La versión anterior siempre usaba WASM y generaba tiempos para subtítulos. Ahora usa WebGPU cuando detecta un adaptador compatible. El usuario puede elegir Procesador si su GPU resulta más lenta. La configuración gráfica usa el encoder en fp32 y el decoder en q4; el procesador conserva q8. Se mantiene el mismo modelo multilingüe y el contexto entre fragmentos. La cuantización y el backend pueden producir diferencias en el texto; revisar el resultado sigue siendo necesario.
+
+Transformers.js 4.3.1 incorpora mejoras del backend y la corrección de descargas duplicadas de la versión 4.3. La caché y el modelo cargado se reutilizan; cambiar de backend puede requerir otros archivos de modelo. La aceleración no garantiza una velocidad concreta: depende del navegador, GPU, temperatura y memoria.
+
+Los tiempos están desactivados inicialmente y se pueden activar para descargar SRT. El audio se decodifica directamente a 16 kHz cuando el navegador lo admite, evitando un remuestreo adicional. La interfaz muestra actividad y fragmentos terminados. Un contador de pasos de texto indica actividad y no representa palabras finales ni un porcentaje estimado.
+
+GitHub Pages aloja archivos estáticos y no ejecuta la transcripción en un servidor. Para conseguir tiempos independientes de la potencia del celular habría que usar un servicio de transcripción o un servidor con GPU. Eso requiere otro despliegue y, posiblemente, un costo de uso.
 
 ## Uso y límites
 
