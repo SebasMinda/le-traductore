@@ -1,10 +1,10 @@
 {
   "name": "voz-studio",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "check": "node --check dist/app.js && node --check dist/worker.js && node --check dist/core.js && node --check dist/engine.js"
+    "check": "node --check dist/app.js && node --check dist/worker.js && node --check dist/core.js && node --check dist/engine.js && node --check dist/speakers.js && node --check dist/speaker-worker.js"
   }
 }

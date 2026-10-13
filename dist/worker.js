@@ -1,4 +1,4 @@
-import {TranscriptionEngine} from './engine.js?v=1.1.0';
+import {TranscriptionEngine} from './engine.js?v=1.2.0';
 const engine=new TranscriptionEngine({post:data=>self.postMessage(data)});
 let running=false;
 self.onmessage=async({data})=>{

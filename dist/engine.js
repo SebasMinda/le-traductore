@@ -15,9 +15,12 @@ export class TranscriptionEngine {
   const total=Math.max(1,Math.ceil(Math.max(0,duration-30)/20)+1);let completed=0,tokens=0,lastUpdate=0;
   this.post({type:'backend',device});this.post({type:'status',phase:'inference',message:`Transcribiendo con ${device==='webgpu'?'aceleración gráfica':'el procesador'}…`});
   const streamer=new WhisperTextStreamer(pipe.tokenizer,{skip_prompt:true,callback_function:()=>{},token_callback_function:()=>{tokens++;const t=this.now();if(t-lastUpdate>800){lastUpdate=t;this.post({type:'activity',tokens,elapsed:(t-started)/1000});}},on_finalize:()=>{completed++;this.post({type:'chunk',completed,total,elapsed:(this.now()-started)/1000});}});
-  const options={task:'transcribe',return_timestamps:!!data.timestamps,chunk_length_s:duration>30?30:0,stride_length_s:5,num_beams:1,do_sample:false,streamer};
+  const options={task:'transcribe',return_timestamps:data.speakers?'word':!!data.timestamps,chunk_length_s:duration>30?30:0,stride_length_s:5,num_beams:1,do_sample:false,streamer};
   if(data.language!=='auto')options.language=data.language;
-  const output=await pipe(data.audio,options);return {output,device,elapsed:(this.now()-started)/1000};
+  const output=await pipe(data.audio,options);
+  // Release Whisper before loading speaker models on memory-limited devices.
+  if(data.speakers){await this.pipe.dispose();this.pipe=null;this.key=null;}
+  return {output,device,elapsed:(this.now()-started)/1000};
  }
  async transcribe(data){let device=await this.selectDevice(data.engine);try{return await this.runOnDevice(data,device);}catch(error){if(device!=='webgpu')throw error;this.gpuFailed=true;const fallback=new Error('La aceleración gráfica no funcionó. Continuando con el procesador…');fallback.code='GPU_FALLBACK';throw fallback;}}
 }
