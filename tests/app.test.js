@@ -15,7 +15,7 @@ function fixture({spawnFail=false}={}){
   querySelectorAll(){return this.children.flatMap(row=>row.children.filter(x=>x.tag==='select'));}
  }
  const elements=Object.fromEntries([...fs.readFileSync(new URL('../dist/index.html',import.meta.url),'utf8').matchAll(/id="([^"]+)"/g)].map(([,id])=>[id,new Element()]));
- elements.speakers.checked=true;elements.speakerCount.value='2';
+ elements.speakers.checked=true;elements.speakerCount.value='2';elements.speakerSpeed.value='fast';
  const storage=new Map(),workers=[];
  class Worker{
   constructor(url){if(spawnFail&&String(url).includes('speaker-worker'))throw new Error('blocked');this.url=String(url);workers.push(this);}
@@ -60,4 +60,32 @@ test('cancellation during recognition terminates workers and ignores late result
 test('disabling speaker recognition skips the second model',()=>{
  const f=fixture();f.elements.speakers.checked=false;f.workers[0].emit(f.result);
  assert.equal(f.workers.length,1);assert.equal(f.elements.transcript.value,f.result.output.text);
+});
+test('model download starts during transcription and uses the same worker for inference',()=>{
+ const f=fixture();f.workers[0].emit({type:'status',phase:'inference',message:'Transcribiendo'});
+ assert.equal(f.workers[1].request.type,'prepare');f.workers[1].emit({type:'status',message:'Descargando hablantes'});
+ assert.equal(f.elements.progressText.textContent,'Transcribiendo');
+ f.workers[0].emit(f.result);assert.equal(f.workers.length,2);assert.equal(f.workers[1].request.type,'identify');assert.equal(f.workers[1].request.speed,'fast');
+ f.workers[1].emit({type:'speakers',segments:timeline});assert.equal(f.entry().length,1);
+});
+test('retranscribing the same audio reuses the timeline but changed settings rerun recognition',()=>{
+ const f=fixture();f.workers[0].emit(f.result);f.workers[1].emit({type:'speakers',segments:timeline});
+ vm.runInContext('busy=true;jobStarted=Date.now();',f.ctx);f.workers[0].emit(f.result);
+ assert.equal(f.workers.length,2);assert.equal(f.entry().length,2);assert.match(f.elements.transcript.value,/Persona 2/);
+ f.elements.speakerSpeed.value='detailed';vm.runInContext('busy=true;jobStarted=Date.now();',f.ctx);f.workers[0].emit(f.result);
+ assert.equal(f.workers.length,3);assert.equal(f.workers[2].request.speed,'detailed');f.elements.cancelButton.onclick();
+});
+test('new audio clears the previous acoustic timeline',()=>{
+ const f=fixture();f.workers[0].emit(f.result);f.workers[1].emit({type:'speakers',segments:timeline});
+ f.ctx.clearAudio();vm.runInContext("busy=true;selected={name:'another.wav'};samples=input;duration=3;jobStarted=Date.now();",f.ctx);f.workers[0].emit(f.result);
+ assert.equal(f.workers.length,3);f.elements.cancelButton.onclick();
+});
+test('one declared person avoids downloading and running the speaker model',()=>{
+ const f=fixture();f.elements.speakerCount.value='1';f.workers[0].emit({type:'status',phase:'inference',message:'Transcribiendo'});f.workers[0].emit(f.result);
+ assert.equal(f.workers.length,1);assert.equal(f.elements.transcript.value,'Persona 1: Hola. Buenas. Volví.');
+});
+test('cancelling while preloading terminates both workers; a preload failure can retry',()=>{
+ const f=fixture();f.workers[0].emit({type:'status',phase:'inference',message:'Transcribiendo'});f.elements.cancelButton.onclick();assert.ok(f.workers.every(w=>w.terminated));
+ const g=fixture();g.workers[0].emit({type:'status',phase:'inference',message:'Transcribiendo'});g.workers[1].emit({type:'error',message:'Red'});
+ g.workers[0].emit(g.result);assert.equal(g.workers.length,3);g.workers[2].emit({type:'speakers',segments:timeline});assert.equal(g.entry().length,1);
 });

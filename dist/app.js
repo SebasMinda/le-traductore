@@ -1,13 +1,14 @@
-import {MAX_SECONDS,MAX_BYTES,clock,toSrt,words,mono} from './core.js?v=1.2.0';
-import {speakerTurns,conversationText,speakerNames} from './speakers.js?v=1.2.0';
+import {MAX_SECONDS,MAX_BYTES,clock,toSrt,words,mono} from './core.js?v=1.3.0';
+import {speakerTurns,conversationText,speakerNames} from './speakers.js?v=1.3.0';
 const $=id=>document.getElementById(id), KEY='voz-studio-history-v1';
 let selected=null,audioURL=null,samples=null,duration=0,busy=false,worker=null,recorder=null,stream=null,timer=null,recordStart=0,recording=false,segments=[],activeId=null,editTimer=null,saveNotice=false;
 let speakerWorker=null,pendingResult=null,jobStarted=0,pendingEdit=null,speakerTimer=null,speakerMessage='';
 function flushEdit(){clearTimeout(editTimer);if(!pendingEdit)return;const item=history.find(x=>x.id===pendingEdit.id);if(item){item.text=pendingEdit.text;item.chunks=[];persist();}pendingEdit=null;}
 let history=[];try{history=JSON.parse(localStorage.getItem(KEY)||'[]');if(!Array.isArray(history))history=[];history=history.filter(x=>x&&typeof x.id==='string'&&typeof x.text==='string');}catch{}
+const speakerCache=new Map();
 const downloads=new Map();let gpuFailed=false;
 function message(text){$('message').textContent=text;$('message').hidden=!text;}
-function state(){for(const id of ['fileTab','micTab','language','model','engine','timestamps','speakers','speakerCount','recordButton','removeAudio'])$(id).disabled=busy; $('speakerCount').disabled=busy||!$('speakers').checked;$('timestamps').disabled=busy||$('speakers').checked;$('dropzone').disabled=busy||recording;$('fileInput').disabled=busy||recording;$('transcribeButton').disabled=!selected||busy||recording;$('cancelButton').hidden=!busy;$('progressArea').hidden=!busy;$('transcript').readOnly=busy;for(const select of $('segments').querySelectorAll('select'))select.disabled=busy;}
+function state(){for(const id of ['fileTab','micTab','language','model','engine','timestamps','speakers','speakerCount','speakerSpeed','recordButton','removeAudio'])$(id).disabled=busy; $('speakerCount').disabled=busy||!$('speakers').checked;$('speakerSpeed').disabled=busy||!$('speakers').checked||$('speakerCount').value==='1';$('timestamps').disabled=busy||$('speakers').checked;$('dropzone').disabled=busy||recording;$('fileInput').disabled=busy||recording;$('transcribeButton').disabled=!selected||busy||recording;$('cancelButton').hidden=!busy;$('progressArea').hidden=!busy;$('transcript').readOnly=busy;for(const select of $('segments').querySelectorAll('select'))select.disabled=busy;}
 function persist(){try{localStorage.setItem(KEY,JSON.stringify(history));saveNotice=false;}catch{saveNotice=true;message('La transcripción está lista, pero no se pudo guardar el historial. Puedes copiarla o descargarla.');}renderHistory();}
 function renderHistory(){const box=$('historyList');box.replaceChildren();$('historyCount').textContent=history.length;$('clearHistory').disabled=!history.length;if(!history.length){const p=document.createElement('p');p.className='history-empty';p.textContent='Todavía no hay transcripciones. Crea la primera desde Voz a texto.';box.append(p);return;}for(const item of history){const row=document.createElement('article');row.className='history-item';const content=document.createElement('div'),title=document.createElement('h3'),date=document.createElement('small'),preview=document.createElement('p');title.textContent=item.name;date.textContent=new Date(item.date).toLocaleString('es-EC');preview.textContent=item.text.slice(0,160)+(item.text.length>160?'…':'');content.append(title,date,preview);const actions=document.createElement('div');actions.className='history-actions';const open=document.createElement('button');open.className='small-button';open.textContent='Abrir';open.onclick=()=>{if(busy||recording)return;flushEdit();clearAudio();activeId=item.id;segments=item.chunks||[];duration=item.duration||0;showResult(item.text);view(false);};const remove=document.createElement('button');remove.className='small-button';remove.textContent='Eliminar';remove.onclick=()=>{history=history.filter(x=>x.id!==item.id);if(activeId===item.id)activeId=null;persist();};actions.append(open,remove);row.append(content,actions);box.append(row);}}
 function view(isHistory){if(busy||recording){message('Termina o cancela la operación actual para cambiar de vista.');return;}$('studioView').hidden=isHistory;$('historyPanel').hidden=!isHistory;$('newView').classList.toggle('active',!isHistory);$('historyView').classList.toggle('active',isHistory);$('breadcrumb').textContent=isHistory?'Mis transcripciones':'Voz a texto';}
@@ -15,7 +16,7 @@ $('newView').onclick=()=>view(false);$('historyView').onclick=()=>view(true);
 $('clearHistory').onclick=()=>{if(confirm('¿Borrar todas las transcripciones guardadas en este navegador?')){history=[];activeId=null;persist();}};
 function tab(mic){if(busy||recording)return;$('filePanel').hidden=mic;$('micPanel').hidden=!mic;$('fileTab').classList.toggle('selected',!mic);$('micTab').classList.toggle('selected',mic);$('fileTab').setAttribute('aria-selected',String(!mic));$('micTab').setAttribute('aria-selected',String(mic));}
 $('fileTab').onclick=()=>tab(false);$('micTab').onclick=()=>tab(true);
-function clearAudio(){selected=null;samples=null;duration=0;if(audioURL)URL.revokeObjectURL(audioURL);audioURL=null;$('audioPlayer').pause();$('audioPlayer').removeAttribute('src');$('audioPlayer').load();$('audioCard').hidden=true;$('fileInput').value='';state();}
+function clearAudio(){speakerCache.clear();speakerWorker?.terminate();speakerWorker=null;selected=null;samples=null;duration=0;if(audioURL)URL.revokeObjectURL(audioURL);audioURL=null;$('audioPlayer').pause();$('audioPlayer').removeAttribute('src');$('audioPlayer').load();$('audioCard').hidden=true;$('fileInput').value='';state();}
 $('removeAudio').onclick=()=>{if(!busy)clearAudio();};
 async function loadAudio(file){if(busy||recording)return;if(!file)return;if(file.size>MAX_BYTES){message('El archivo supera 60 MB. Recorta o comprime el audio antes de subirlo.');return;}clearAudio();selected=file;audioURL=URL.createObjectURL(file);$('audioPlayer').src=audioURL;$('audioName').textContent=file.name||'Grabación';$('audioMeta').textContent=`${(file.size/1048576).toFixed(1)} MB · listo para transcribir`;$('audioCard').hidden=false;$('waveform').getContext('2d').clearRect(0,0,600,54);message('');state();}
 $('audioPlayer').onloadedmetadata=()=>{const n=$('audioPlayer').duration;if(Number.isFinite(n)){$('audioMeta').textContent=`${clock(n)} · ${(selected?.size/1048576||0).toFixed(1)} MB`;if(n>MAX_SECONDS){message('Este audio supera los 10 minutos. Recórtalo y vuelve a subirlo.');selected=null;state();}}};
@@ -35,8 +36,8 @@ $('recordButton').onclick=async()=>{if(recording){stopRecording();return;}if(!na
 async function decode(file){const Ctx=window.AudioContext||window.webkitAudioContext;if(!Ctx)throw new Error('Este navegador no permite decodificar audio. Prueba con Chrome.');let ctx;try{ctx=new Ctx({sampleRate:16000});}catch{ctx=new Ctx();}try{const decoded=await ctx.decodeAudioData(await file.arrayBuffer());if(decoded.duration>MAX_SECONDS)throw new Error('El audio supera los 10 minutos. Recórtalo y vuelve a subirlo.');duration=decoded.duration;if(decoded.sampleRate===16000)return decoded.numberOfChannels===1?decoded.getChannelData(0):mono(Array.from({length:decoded.numberOfChannels},(_,i)=>decoded.getChannelData(i)));const offline=new OfflineAudioContext(1,Math.ceil(duration*16000),16000);const buffer=offline.createBuffer(1,decoded.length,decoded.sampleRate);buffer.copyToChannel(mono(Array.from({length:decoded.numberOfChannels},(_,i)=>decoded.getChannelData(i))),0);const source=offline.createBufferSource();source.buffer=buffer;source.connect(offline.destination);source.start();const result=await offline.startRendering();return result.getChannelData(0);}finally{await ctx.close();}}
 function drawWave(data){const canvas=$('waveform'),ctx=canvas.getContext('2d');ctx.clearRect(0,0,600,54);ctx.fillStyle='#a8b799';const bars=110,stride=Math.max(1,Math.floor(data.length/bars));for(let i=0;i<bars;i++){let peak=0;for(let j=i*stride;j<Math.min((i+1)*stride,data.length);j+=Math.max(1,Math.floor(stride/80)))peak=Math.max(peak,Math.abs(data[j]));const height=Math.max(3,peak*48);ctx.fillRect(i*(600/bars),27-height/2,3,height);}}
 function progress(text,percent){$('progressText').textContent=text;if(percent!=null)$('progressBar').style.width=`${Math.max(0,Math.min(100,percent))}%`;}
-function finish(){clearInterval(speakerTimer);speakerTimer=null;busy=false;state();}
-function makeWorker(){const w=new Worker(new URL('./worker.js?v=1.2.0',import.meta.url),{type:'module'});w.onmessage=({data})=>{if(!busy)return;if(data.type==='status')progress(data.message,data.phase==='inference'?30:4);if(data.type==='backend')$('resultStatus').textContent=data.device==='webgpu'?'Aceleración gráfica activa':'Procesando en este dispositivo';if(data.type==='activity')progress(`Transcribiendo · ${clock(data.elapsed)} · ${data.tokens} pasos de texto`);if(data.type==='download'){const p=data.progress;if(p.status==='progress'){downloads.set(p.file,{loaded:p.loaded||0,total:p.total||0});let total=0,loaded=0;for(const x of downloads.values()){loaded+=x.loaded;total+=x.total;}progress(`Descargando modelo · ${Math.round(loaded/1048576)} MB de ${Math.round(total/1048576)} MB`,total?Math.min(29,loaded/total*29):2);}}if(data.type==='chunk')progress(`Transcribiendo · fragmento ${data.completed} de ${data.total} · ${clock(data.elapsed)}`,30+($('speakers').checked?45:65)*data.completed/data.total);if(data.type==='result'){if($('speakers').checked&&data.output.text?.trim()){identifySpeakers(data);}else completeResult(data);}if(data.type==='fallback'){gpuFailed=true;w.terminate();worker=makeWorker();downloads.clear();progress(data.message,4);sendAudio('cpu');return;}if(data.type==='error'){finish();message(`No se pudo transcribir. Comprueba tu conexión y vuelve a intentarlo. Detalle: ${data.message}`);}};w.onerror=()=>{w.terminate();if(worker===w)worker=null;finish();message('No se pudo cargar el motor de voz. Comprueba la conexión, recarga la página e intenta otra vez.');};return w;}
+function finish(){speakerWorker?.terminate();speakerWorker=null;pendingResult=null;clearInterval(speakerTimer);speakerTimer=null;busy=false;state();}
+function makeWorker(){const w=new Worker(new URL('./worker.js?v=1.3.0',import.meta.url),{type:'module'});w.onmessage=({data})=>{if(!busy)return;if(data.type==='status'){progress(data.message,data.phase==='inference'?30:4);if(data.phase==='inference')warmSpeakerModel();}if(data.type==='backend')$('resultStatus').textContent=data.device==='webgpu'?'Aceleración gráfica activa':'Procesando en este dispositivo';if(data.type==='activity')progress(`Transcribiendo · ${clock(data.elapsed)} · ${data.tokens} pasos de texto`);if(data.type==='download'){const p=data.progress;if(p.status==='progress'){downloads.set(p.file,{loaded:p.loaded||0,total:p.total||0});let total=0,loaded=0;for(const x of downloads.values()){loaded+=x.loaded;total+=x.total;}progress(`Descargando modelo · ${Math.round(loaded/1048576)} MB de ${Math.round(total/1048576)} MB`,total?Math.min(29,loaded/total*29):2);}}if(data.type==='chunk')progress(`Transcribiendo · fragmento ${data.completed} de ${data.total} · ${clock(data.elapsed)}`,30+($('speakers').checked?45:65)*data.completed/data.total);if(data.type==='result'){if($('speakers').checked&&data.output.text?.trim()){identifySpeakers(data);}else completeResult(data);}if(data.type==='fallback'){gpuFailed=true;w.terminate();worker=makeWorker();downloads.clear();progress(data.message,4);sendAudio('cpu');return;}if(data.type==='error'){finish();message(`No se pudo transcribir. Comprueba tu conexión y vuelve a intentarlo. Detalle: ${data.message}`);}};w.onerror=()=>{w.terminate();if(worker===w)worker=null;finish();message('No se pudo cargar el motor de voz. Comprueba la conexión, recarga la página e intenta otra vez.');};return w;}
 function completeResult(data,warning=''){
  segments=data.output.chunks||[];const text=(data.output.text||'').trim();activeId=crypto.randomUUID();
  if(text){history.unshift({id:activeId,name:selected?.name||'Grabación',date:Date.now(),text,chunks:segments,duration});history=history.slice(0,20);persist();}
@@ -45,9 +46,29 @@ function completeResult(data,warning=''){
  $('resultStatus').textContent=text?`${data.device==='webgpu'?'GPU':'Procesador'} · ${clock((Date.now()-jobStarted)/1000)} · texto editable`:'No se detectó voz';
  if(warning)message(warning);else if(!text)message('No se detectó voz en el audio. Prueba con una grabación más clara.');else if(!saveNotice)message('');
 }
+function speakerKey(){return `${$('speakerCount').value}:${$('speakerSpeed').value}`;}
+function warmSpeakerModel(){
+ if(!$('speakers').checked||$('speakerCount').value==='1'||speakerCache.has(speakerKey())||speakerWorker)return;
+ let w;
+ try{
+  w=new Worker(new URL('./speaker-worker.js?v=1.3.0',import.meta.url));speakerWorker=w;
+  const release=()=>{w.terminate();if(speakerWorker===w)speakerWorker=null;};
+  w.onmessage=({data})=>{if(data.type==='error')release();};w.onerror=release;
+  w.postMessage({type:'prepare'});
+ }catch{w?.terminate();if(speakerWorker===w)speakerWorker=null;}
+}
+function applySpeakers(result,timeline){
+ if(!result.output.chunks?.length){completeResult(result,'El texto está listo, pero el modelo no produjo tiempos para identificar a las personas.');return;}
+ const turns=speakerTurns(result.output.chunks,timeline,duration);
+ if(!speakerNames(turns).length){completeResult(result,'El texto está listo, pero no se pudieron distinguir voces con suficiente claridad.');return;}
+ const unknown=turns.some(t=>t.speaker==='Sin identificar'||t.speaker==='Voces superpuestas');
+ completeResult({...result,output:{text:conversationText(turns),chunks:turns}},unknown?'Algunos fragmentos tienen voces superpuestas o no se pudieron identificar. Puedes corregir las etiquetas.':'');
+}
 function identifySpeakers(result){
+ if($('speakerCount').value==='1'){applySpeakers(result,[{start:0,end:duration,speaker:0}]);return;}
+ if(speakerCache.has(speakerKey())){applySpeakers(result,speakerCache.get(speakerKey()));return;}
  pendingResult=result;speakerMessage='Preparando reconocimiento de personas…';progress(speakerMessage,80);
- let w;try{w=new Worker(new URL('./speaker-worker.js?v=1.2.0',import.meta.url));}catch{pendingResult=null;completeResult(result,'El texto está listo, pero el navegador no pudo iniciar el reconocimiento de personas.');return;}speakerWorker=w;
+ let w=speakerWorker;try{if(!w)w=new Worker(new URL('./speaker-worker.js?v=1.3.0',import.meta.url));}catch{pendingResult=null;completeResult(result,'El texto está listo, pero el navegador no pudo iniciar el reconocimiento de personas.');return;}speakerWorker=w;
  speakerTimer=setInterval(()=>progress(`${speakerMessage} · ${clock((Date.now()-jobStarted)/1000)}`,85),1000);
  const fallback=detail=>{if(!busy||speakerWorker!==w)return;w.terminate();speakerWorker=null;const data=pendingResult;pendingResult=null;completeResult(data,`El texto está listo, pero no se pudieron identificar las personas. Puedes reintentar o desactivar Identificar personas. ${detail}`);};
  w.onmessage=({data})=>{
@@ -56,17 +77,14 @@ function identifySpeakers(result){
   if(data.type==='error')fallback(data.message);
   if(data.type==='speakers'){
    w.terminate();speakerWorker=null;const result=pendingResult;pendingResult=null;
-   if(!result.output.chunks?.length){completeResult(result,'El texto está listo, pero el modelo no produjo tiempos para identificar a las personas.');return;}
-   const turns=speakerTurns(result.output.chunks,data.segments,duration);
-   if(!speakerNames(turns).length){completeResult(result,'El texto está listo, pero no se pudieron distinguir voces con suficiente claridad.');return;}
-   const unknown=turns.some(t=>t.speaker==='Sin identificar'||t.speaker==='Voces superpuestas');
-   completeResult({...result,output:{text:conversationText(turns),chunks:turns}},unknown?'Algunos fragmentos tienen voces superpuestas o no se pudieron identificar. Puedes corregir las etiquetas.':'');
+   if(data.segments.length)speakerCache.set(speakerKey(),data.segments);
+   applySpeakers(result,data.segments);
   }
  };
  w.onerror=()=>fallback('No se pudo cargar el modelo de hablantes.');
- try{const copy=new Float32Array(samples);w.postMessage({type:'identify',audio:copy,count:$('speakerCount').value},[copy.buffer]);}catch{fallback('No hay suficiente memoria para analizar las voces.');}
+ try{const copy=new Float32Array(samples);w.postMessage({type:'identify',audio:copy,count:$('speakerCount').value,speed:$('speakerSpeed').value},[copy.buffer]);}catch{fallback('No hay suficiente memoria para analizar las voces.');}
 }
-function sendAudio(engineOverride){const copy=new Float32Array(samples);worker.postMessage({type:'transcribe',audio:copy,model:$('model').value,language:$('language').value,engine:engineOverride||(gpuFailed?'cpu':$('engine').value),timestamps:$('timestamps').checked,speakers:$('speakers').checked},[copy.buffer]);}
+function sendAudio(engineOverride){const copy=new Float32Array(samples);worker.postMessage({type:'transcribe',audio:copy,model:$('model').value,language:$('language').value,engine:engineOverride||(gpuFailed?'cpu':$('engine').value),timestamps:$('timestamps').checked,speakers:$('speakers').checked,singleSpeaker:$('speakerCount').value==='1'},[copy.buffer]);}
 let job=0;
 $('transcribeButton').onclick=async()=>{if(!selected||busy)return;busy=true;jobStarted=Date.now();pendingResult=null;flushEdit();const id=++job;state();message('');progress('Preparando el audio…',2);try{if(!samples){const decoded=await decode(selected);if(!busy||id!==job)return;samples=decoded;}if(!busy||id!==job)return;drawWave(samples);if(!worker)worker=makeWorker();downloads.clear();sendAudio();}catch(e){if(id!==job)return;finish();message(e.message?.includes('10 minutos')?e.message:`No se pudo leer el audio. Prueba con MP3 o WAV. ${e.message||''}`);}};
 $('cancelButton').onclick=()=>{job++;worker?.terminate();worker=null;speakerWorker?.terminate();speakerWorker=null;pendingResult=null;finish();message('Transcripción cancelada. El audio sigue disponible para volver a intentarlo.');};
@@ -80,3 +98,4 @@ $('exportButton').onclick=()=>download($('transcript').value,'txt','text/plain;c
 window.addEventListener('pagehide',()=>{flushEdit();stopTracks();clearInterval(timer);worker?.terminate();worker=null;speakerWorker?.terminate();if(audioURL)URL.revokeObjectURL(audioURL);});renderHistory();state();
 
 $('speakers').onchange=state;
+$('speakerCount').onchange=state;

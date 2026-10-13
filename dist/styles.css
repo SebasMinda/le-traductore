@@ -4,3 +4,5 @@
 .performance-options{margin:-4px 0 18px}.performance-options select{font-size:11px}.checkbox-label{display:flex;gap:8px;align-items:center;margin-top:13px;color:#67725a;font-size:11px}.checkbox-label input{accent-color:#667959;margin:0}.performance-options>small{display:block;font-size:9px;line-height:1.6;color:#909a83;margin-top:8px}
 
 .speaker-options{border:1px solid #e0e5d8;background:#f7f8f2;border-radius:9px;padding:12px;margin:0 0 18px}.speaker-options .checkbox-label{margin:0 0 12px;font-weight:600}.speaker-options small{display:block;font-size:10px;line-height:1.7;color:#7c876f;margin-top:9px}.speaker-summary{background:#edf1e5;border-radius:7px;padding:10px 12px;color:#65784f;font-size:11px;margin:16px 0 0}.segments:has(.speaker-label){max-height:260px}.segment:has(.speaker-label){flex-wrap:wrap;padding:9px 0;border-bottom:1px solid #edf0e7}.speaker-label{width:auto;max-width:165px;margin:0;padding:4px 6px;font-size:10px;background:#eef1e7}.segment:has(.speaker-label) p{flex-basis:100%;font-size:12px;padding-left:4px}
+
+.speaker-speed{margin-top:12px}
